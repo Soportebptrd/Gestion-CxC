@@ -37,7 +37,7 @@ client = gspread.authorize(creds)
 
 # ===== CARGA DE DATOS =====
 SHEET_URL = "https://docs.google.com/spreadsheets/d/1z-BExCxP_rNEz-Ee0Xot6XwInlBfQ5icSgyxmu7mGMY/edit"
-sheet_respuestas = client.open_by_url(SHEET_URL).worksheet("Sheet1")
+sheet_respuestas = client.open_by_url(SHEET_URL).worksheet("sheet1")
 sheet_clientes = client.open_by_url(SHEET_URL).worksheet("BaseClientes")
 
 df_respuestas = pd.DataFrame(sheet_respuestas.get_all_records())
@@ -77,3 +77,4 @@ def export_pdf(df):
 
 pdf_file = export_pdf(df_final)
 st.download_button("📄 Descargar PDF", data=pdf_file, file_name="Reporte_CxC.pdf", mime="application/pdf")
+
