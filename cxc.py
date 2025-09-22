@@ -49,7 +49,7 @@ try:
     creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
     client = gspread.authorize(creds)
 
-    sheet_respuestas = client.open_by_url(SHEET_URL).worksheet("Sheet1")
+    sheet_respuestas = client.open_by_url(SHEET_URL).worksheet("sheet1")
     sheet_clientes = client.open_by_url(SHEET_URL).worksheet("BaseClientes")
 
     df_respuestas = pd.DataFrame(sheet_respuestas.get_all_records())
@@ -190,3 +190,4 @@ if st.sidebar.button("🚪 Cerrar sesión"):
     for key in list(st.session_state.keys()):
         del st.session_state[key]
     st.rerun()
+
