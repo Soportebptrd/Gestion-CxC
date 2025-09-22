@@ -2,79 +2,105 @@ import streamlit as st
 import pandas as pd
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
-from io import BytesIO
 from fpdf import FPDF
+import io
+from datetime import datetime
 
-# ===== LOGIN =====
+# --------------------------
+# LOGIN
+# --------------------------
 st.title("📞 Seguimiento de Clientes - CxC")
 
 usuario_input = st.text_input("Usuario")
 contrasena_input = st.text_input("Contraseña", type="password")
 
-users_dict = dict(st.secrets["USERS"])
-
-if st.button("Iniciar sesión"):
-    if usuario_input in users_dict and contrasena_input == users_dict[usuario_input]:
+if st.button("Ingresar"):
+    if usuario_input == st.secrets["login"]["usuario"] and contrasena_input == st.secrets["login"]["contrasena"]:
         st.success(f"Bienvenido {usuario_input}")
-        st.session_state["logged_in"] = True
+        st.session_state['logged_in'] = True
     else:
         st.error("Usuario o contraseña incorrectos")
-        st.stop()
-elif "logged_in" not in st.session_state:
+
+if not st.session_state.get('logged_in'):
     st.stop()
 
-# ===== GOOGLE SHEETS =====
-scope = [
-    "https://spreadsheets.google.com/feeds",
-    "https://www.googleapis.com/auth/spreadsheets",
-    "https://www.googleapis.com/auth/drive.file",
-    "https://www.googleapis.com/auth/drive"
-]
+# --------------------------
+# CONEXIÓN A GOOGLE SHEET
+# --------------------------
+scope = ["https://spreadsheets.google.com/feeds",
+         "https://www.googleapis.com/auth/drive"]
 
-creds_dict = dict(st.secrets["GOOGLE_SHEET"])
+creds_dict = dict(st.secrets["google_sheet"])
 creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
 client = gspread.authorize(creds)
 
-# ===== CARGA DE DATOS =====
-SHEET_URL = "https://docs.google.com/spreadsheets/d/1z-BExCxP_rNEz-Ee0Xot6XwInlBfQ5icSgyxmu7mGMY/edit"
-sheet_respuestas = client.open_by_url(SHEET_URL).worksheet("sheet1")
-sheet_clientes = client.open_by_url(SHEET_URL).worksheet("BaseClientes")
+# URLs de tus Google Sheets
+SHEET_URL_CLIENTES = "TU_SHEET_BASECLIENTES_URL"
+SHEET_URL_RESPUESTAS = "TU_SHEET_RESPUESTAS_URL"
 
-df_respuestas = pd.DataFrame(sheet_respuestas.get_all_records())
+sheet_clientes = client.open_by_url(SHEET_URL_CLIENTES).worksheet("BaseClientes")
+sheet_respuestas = client.open_by_url(SHEET_URL_RESPUESTAS).worksheet("sheet1")
+
+# --------------------------
+# LEER DATOS
+# --------------------------
 df_clientes = pd.DataFrame(sheet_clientes.get_all_records())
+df_respuestas = pd.DataFrame(sheet_respuestas.get_all_records())
 
-df_respuestas.rename(columns={"Código del cliente": "codigo_cliente"}, inplace=True)
-df_clientes.rename(columns={"Código del cliente": "codigo_cliente", "Nombre Cliente": "nombre_cliente"}, inplace=True)
+# Limpiar espacios
+df_clientes['Código del cliente'] = df_clientes['Código del cliente'].astype(str).str.strip()
+df_respuestas['Código del cliente'] = df_respuestas['Código del cliente'].astype(str).str.strip()
 
-df_respuestas["codigo_cliente"] = df_respuestas["codigo_cliente"].astype(str).str.strip()
-df_clientes["codigo_cliente"] = df_clientes["codigo_cliente"].astype(str).str.strip()
+# --------------------------
+# FILTRAR POR FECHAS
+# --------------------------
+fecha_inicio = st.date_input("Fecha inicio", datetime(2025, 9, 1))
+fecha_fin = st.date_input("Fecha fin", datetime.now())
 
-df_final = df_respuestas.merge(df_clientes, on="codigo_cliente", how="left")
-df_final = df_final[["Marca temporal", "codigo_cliente", "nombre_cliente", "Llamado", "Monto", "Notas", "Usuario"]]
+df_respuestas['Marca temporal'] = pd.to_datetime(df_respuestas['Marca temporal'], dayfirst=True)
+df_filtrado = df_respuestas[(df_respuestas['Marca temporal'] >= pd.to_datetime(fecha_inicio)) &
+                             (df_respuestas['Marca temporal'] <= pd.to_datetime(fecha_fin))]
 
+# --------------------------
+# MERGE CON CLIENTES
+# --------------------------
+df_final = df_filtrado.merge(df_clientes, left_on="Código del cliente", right_on="Código del cliente", how="left")
+
+# Reordenar columnas
+df_final = df_final[['Marca temporal', 'Código del cliente', 'Nombre Cliente', 'Llamado', 'Monto', 'Notas', 'Usuario']]
+
+# --------------------------
+# COLORES SEGÚN LLAMADO
+# --------------------------
 def color_llamado(val):
-    return 'background-color: #b6fcb6' if str(val).lower() == "si" else 'background-color: #ffb6b6'
+    if str(val).lower() == "si":
+        return 'background-color: lightgreen'
+    else:
+        return 'background-color: lightcoral'
 
-styled_df = df_final.style.applymap(color_llamado, subset=["Llamado"])
-st.dataframe(styled_df, height=900, width="stretch")
+styled_df = df_final.style.applymap(color_llamado, subset=['Llamado'])
 
-# ===== EXPORTAR PDF =====
+# --------------------------
+# MOSTRAR TABLA
+# --------------------------
+st.dataframe(styled_df, height=800, width='stretch')
+
+# --------------------------
+# EXPORTAR PDF
+# --------------------------
 def export_pdf(df):
     pdf = FPDF()
     pdf.add_page()
     pdf.set_font("Arial", size=12)
-    col_names = df.columns.tolist()
-    pdf.cell(0, 10, "Reporte Clientes CxC", ln=True, align="C")
-    pdf.ln(5)
+
     for i, row in df.iterrows():
-        for col in col_names:
-            pdf.cell(0, 8, f"{col}: {row[col]}", ln=True)
-        pdf.ln(5)
-    pdf_output = BytesIO()
-    pdf.output(pdf_output)
+        pdf.cell(0, 10, txt=f"{row['Código del cliente']} - {row['Nombre Cliente']} - {row['Llamado']} - {row['Monto']}", ln=True)
+
+    pdf_output = io.BytesIO()
+    pdf_bytes = pdf.output(dest='S').encode('latin1')
+    pdf_output.write(pdf_bytes)
     pdf_output.seek(0)
     return pdf_output
 
 pdf_file = export_pdf(df_final)
-st.download_button("📄 Descargar PDF", data=pdf_file, file_name="Reporte_CxC.pdf", mime="application/pdf")
-
+st.download_button("📄 Descargar PDF", data=pdf_file, file_name="reporte.pdf", mime="application/pdf")
