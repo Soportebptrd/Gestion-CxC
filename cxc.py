@@ -5,9 +5,7 @@ from oauth2client.service_account import ServiceAccountCredentials
 from io import BytesIO
 from fpdf import FPDF
 
-# ========================
-# LOGIN DE USUARIOS
-# ========================
+# ===== LOGIN =====
 st.title("📞 Seguimiento de Clientes - CxC")
 
 usuario_input = st.text_input("Usuario")
@@ -25,9 +23,7 @@ if st.button("Iniciar sesión"):
 elif "logged_in" not in st.session_state:
     st.stop()
 
-# ========================
-# CONEXIÓN GOOGLE SHEETS
-# ========================
+# ===== GOOGLE SHEETS =====
 scope = [
     "https://spreadsheets.google.com/feeds",
     "https://www.googleapis.com/auth/spreadsheets",
@@ -39,53 +35,30 @@ creds_dict = dict(st.secrets["GOOGLE_SHEET"])
 creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
 client = gspread.authorize(creds)
 
-# ========================
-# CARGA DE DATOS
-# ========================
+# ===== CARGA DE DATOS =====
 SHEET_URL = "https://docs.google.com/spreadsheets/d/1z-BExCxP_rNEz-Ee0Xot6XwInlBfQ5icSgyxmu7mGMY/edit"
-
 sheet_respuestas = client.open_by_url(SHEET_URL).worksheet("Sheet1")
 sheet_clientes = client.open_by_url(SHEET_URL).worksheet("BaseClientes")
 
-data_respuestas = sheet_respuestas.get_all_records()
-data_clientes = sheet_clientes.get_all_records()
+df_respuestas = pd.DataFrame(sheet_respuestas.get_all_records())
+df_clientes = pd.DataFrame(sheet_clientes.get_all_records())
 
-df_respuestas = pd.DataFrame(data_respuestas)
-df_clientes = pd.DataFrame(data_clientes)
-
-# Limpiar nombres de columnas para merge
 df_respuestas.rename(columns={"Código del cliente": "codigo_cliente"}, inplace=True)
 df_clientes.rename(columns={"Código del cliente": "codigo_cliente", "Nombre Cliente": "nombre_cliente"}, inplace=True)
 
 df_respuestas["codigo_cliente"] = df_respuestas["codigo_cliente"].astype(str).str.strip()
 df_clientes["codigo_cliente"] = df_clientes["codigo_cliente"].astype(str).str.strip()
 
-# Merge para obtener nombre del cliente
 df_final = df_respuestas.merge(df_clientes, on="codigo_cliente", how="left")
-
-# Reordenar columnas
 df_final = df_final[["Marca temporal", "codigo_cliente", "nombre_cliente", "Llamado", "Monto", "Notas", "Usuario"]]
 
-# ========================
-# ESTILOS
-# ========================
 def color_llamado(val):
-    if str(val).lower() == "si":
-        color = 'background-color: #b6fcb6'  # verde
-    else:
-        color = 'background-color: #ffb6b6'  # rojo
-    return color
+    return 'background-color: #b6fcb6' if str(val).lower() == "si" else 'background-color: #ffb6b6'
 
 styled_df = df_final.style.applymap(color_llamado, subset=["Llamado"])
+st.dataframe(styled_df, height=900, width="stretch")
 
-# ========================
-# TABLA STREAMLIT
-# ========================
-st.dataframe(styled_df, height=900, width="stretch")  # ancho completo, tabla alta
-
-# ========================
-# EXPORTAR PDF
-# ========================
+# ===== EXPORTAR PDF =====
 def export_pdf(df):
     pdf = FPDF()
     pdf.add_page()
