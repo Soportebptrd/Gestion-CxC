@@ -36,7 +36,7 @@ creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
 client = gspread.authorize(creds)
 
 SHEET_URL = "TU_LINK_DE_GOOGLE_SHEET"  # <- Pon aquí tu link
-sheet_respuestas = client.open_by_url(SHEET_URL).worksheet("Sheet1")
+sheet_respuestas = client.open_by_url(SHEET_URL).worksheet("sheet1")
 sheet_clientes = client.open_by_url(SHEET_URL).worksheet("BaseClientes")
 
 # ---------------------------
@@ -93,3 +93,4 @@ if st.button("📄 Exportar PDF"):
     pdf_file = export_pdf(df_final)
     st.success("PDF generado correctamente")
     st.download_button("Descargar PDF", pdf_file, file_name="Seguimiento_CxC.pdf")
+
