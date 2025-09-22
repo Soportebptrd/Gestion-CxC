@@ -2,8 +2,6 @@ import streamlit as st
 import pandas as pd
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
-from io import BytesIO
-from fpdf import FPDF
 from datetime import datetime, timedelta
 
 # ===== CONFIGURACIÓN =====
@@ -19,10 +17,8 @@ if not st.session_state.logged_in:
     usuario_input = st.text_input("Usuario")
     contrasena_input = st.text_input("Contraseña", type="password")
     
-    USERS = st.secrets["login"]
-    
     if st.button("Iniciar sesión"):
-        if usuario_input in USERS and contrasena_input == USERS[usuario_input]:
+        if usuario_input == st.secrets["login"]["usuario"] and contrasena_input == st.secrets["login"]["contrasena"]:
             st.session_state.logged_in = True
             st.session_state.username = usuario_input
             st.rerun()
@@ -30,22 +26,11 @@ if not st.session_state.logged_in:
             st.error("❌ Usuario o contraseña incorrectos")
     st.stop()
 
-# ===== CONEXIÓN GOOGLE SHEETS =====
-SHEET_URL = st.secrets["google"]["SHEET_URL"]
+# ===== GOOGLE SHEETS =====
+SHEET_URL = "https://docs.google.com/spreadsheets/d/1z-BExCxP_rNEz-Ee0Xot6XwInlBfQ5icSgyxmu7mGMY/edit"
 
-creds_dict = {
-    "type": "service_account",
-    "project_id": "gestion-cxc-idemefa",
-    "private_key_id": "b0435d5ab60ea63f179087c1bbf1d050cfcd77ae",
-    "private_key": st.secrets["google"]["private_key"].replace("\\n", "\n"),
-    "client_email": "gestion-cxc-idemefa@gestion-cxc-idemefa.iam.gserviceaccount.com",
-    "client_id": "100177103439146822848",
-    "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-    "token_uri": "https://oauth2.googleapis.com/token",
-    "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
-    "client_x509_cert_url": "https://www.googleapis.com/robot/v1/metadata/x509/gestion-cxc-idemefa@gestion-cxc-idemefa.iam.gserviceaccount.com",
-    "universe_domain": "googleapis.com"
-}
+creds_dict = dict(st.secrets["GOOGLE_SHEET"])
+creds_dict["private_key"] = creds_dict["private_key"].replace("\\n", "\n")  # Formato correcto de clave
 
 scope = [
     "https://spreadsheets.google.com/feeds",
@@ -58,6 +43,7 @@ try:
     creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
     client = gspread.authorize(creds)
     
+    # Cargar datos
     sheet_respuestas = client.open_by_url(SHEET_URL).worksheet("sheet1")
     sheet_clientes = client.open_by_url(SHEET_URL).worksheet("BaseClientes")
     
@@ -95,23 +81,40 @@ if "Marca temporal" in df_final.columns:
 # ===== FILTROS =====
 st.sidebar.header("🔍 Filtros")
 
-if "fecha" in df_final.columns:
-    min_date = df_final["fecha"].min()
-    max_date = df_final["fecha"].max()
-    
-    fecha_inicio = st.sidebar.date_input("Fecha inicio:", value=max_date - timedelta(days=7), min_value=min_date, max_value=max_date)
-    fecha_fin = st.sidebar.date_input("Fecha fin:", value=max_date, min_value=min_date, max_value=max_date)
-    
-    df_filtrado = df_final[(df_final["fecha"] >= fecha_inicio) & (df_final["fecha"] <= fecha_fin)]
+if "fecha" in df_final.columns and not df_final["fecha"].isnull().all():
+    min_date = df_final["fecha"].min() or datetime.today().date()
+    max_date = df_final["fecha"].max() or datetime.today().date()
+
+    fecha_inicio = st.sidebar.date_input(
+        "Fecha inicio:",
+        value=max_date - timedelta(days=7),
+        min_value=min_date,
+        max_value=max_date
+    )
+    fecha_fin = st.sidebar.date_input(
+        "Fecha fin:",
+        value=max_date,
+        min_value=min_date,
+        max_value=max_date
+    )
+
+    df_filtrado = df_final[
+        (df_final["fecha"] >= fecha_inicio) & 
+        (df_final["fecha"] <= fecha_fin)
+    ]
 else:
     df_filtrado = df_final
 
 if "usuario" in df_filtrado.columns:
     usuarios = sorted(df_filtrado["usuario"].dropna().unique())
-    usuarios_seleccionados = st.sidebar.multiselect("Usuarios:", options=usuarios, default=usuarios)
+    usuarios_seleccionados = st.sidebar.multiselect(
+        "Usuarios:",
+        options=usuarios,
+        default=usuarios
+    )
     df_filtrado = df_filtrado[df_filtrado["usuario"].isin(usuarios_seleccionados)]
 
-# ===== INTERFAZ =====
+# ===== INTERFAZ PRINCIPAL =====
 st.header(f"📋 Registro de Llamadas - {st.session_state.username}")
 
 col1, col2, col3, col4 = st.columns(4)
@@ -145,7 +148,12 @@ else:
 # ===== EXPORTAR =====
 if not df_filtrado.empty:
     csv = df_filtrado.to_csv(index=False)
-    st.download_button("📥 Descargar CSV", csv, f"reporte_cxc_{datetime.now().strftime('%Y%m%d')}.csv", "text/csv")
+    st.download_button(
+        "📥 Descargar CSV",
+        csv,
+        f"reporte_cxc_{datetime.now().strftime('%Y%m%d')}.csv",
+        "text/csv"
+    )
 
 # ===== CERRAR SESIÓN =====
 if st.sidebar.button("🚪 Cerrar sesión"):
