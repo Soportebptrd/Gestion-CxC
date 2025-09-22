@@ -108,7 +108,7 @@ with col3:
 with col4:
     if "llamado" in df_filtrado.columns:
         llamados_si = df_filtrado["llamado"].str.upper().isin(["SI", "SÍ"]).sum()
-        st.metric("✅ Llamados exitosos", llamados_si)
+        st.metric("✅ Llamadas exitosas", llamados_si)
 
 def estilo_llamados(val):
     if str(val).upper() in ["SÍ", "SI", "YES"]:
@@ -160,3 +160,4 @@ if st.sidebar.button("🚪 Cerrar sesión"):
     for key in list(st.session_state.keys()):
         del st.session_state[key]
     st.rerun()
+
