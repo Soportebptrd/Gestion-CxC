@@ -1,13 +1,32 @@
 import streamlit as st
 import pandas as pd
-import json
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
-from datetime import datetime
+from io import BytesIO
 from fpdf import FPDF
 
 # ==========================
-# CONFIGURACIÓN GOOGLE SHEET
+# LOGIN
+# ==========================
+if 'authenticated' not in st.session_state:
+    st.session_state['authenticated'] = False
+
+if not st.session_state['authenticated']:
+    st.title("🔒 Iniciar sesión")
+    usuario_input = st.text_input("Usuario")
+    password_input = st.text_input("Contraseña", type="password")
+    if st.button("Ingresar"):
+        users = st.secrets["APP_USERS"]
+        if usuario_input in users and password_input == users[usuario_input]:
+            st.success(f"¡Bienvenido {usuario_input}!")
+            st.session_state['authenticated'] = True
+            st.session_state['usuario'] = usuario_input
+        else:
+            st.error("Usuario o contraseña incorrectos")
+    st.stop()
+
+# ==========================
+# GOOGLE SHEET
 # ==========================
 scope = [
     "https://spreadsheets.google.com/feeds",
@@ -16,96 +35,70 @@ scope = [
     "https://www.googleapis.com/auth/drive"
 ]
 
-# Credenciales desde Streamlit Secrets
-creds_dict = json.loads(st.secrets["GOOGLE_CREDS"])
-creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+creds_dict = dict(st.secrets["GOOGLE_SHEET"])
+creds_dict["private_key"] = creds_dict["private_key"].replace("\\n", "\n")
 
+creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
 client = gspread.authorize(creds)
 
-# IDs de las hojas
-SHEET_KEY = "1z-BExCxP_rNEz-Ee0Xot6XwInlBfQ5icSgyxmu7mGMY"
+SHEET_URL = "https://docs.google.com/spreadsheets/d/1z-BExCxP_rNEz-Ee0Xot6XwInlBfQ5icSgyxmu7mGMY/edit"
 
-sheet_respuestas = client.open_by_key(SHEET_KEY).worksheet("Sheet1")
-sheet_clientes = client.open_by_key(SHEET_KEY).worksheet("BaseClientes")
-
-# ==========================
-# CARGA DE DATOS
-# ==========================
+sheet_respuestas = client.open_by_url(SHEET_URL).worksheet("Sheet1")
 df_respuestas = pd.DataFrame(sheet_respuestas.get_all_records())
+
+sheet_clientes = client.open_by_url(SHEET_URL).worksheet("BaseClientes")
 df_clientes = pd.DataFrame(sheet_clientes.get_all_records())
 
-# Limpieza de nombres de columnas
-df_respuestas.columns = df_respuestas.columns.str.strip().str.lower().str.replace(" ", "_")
-df_clientes.columns = df_clientes.columns.str.strip().str.lower().str.replace(" ", "_")
-
-# Merge para agregar nombre del cliente
-df_final = df_respuestas.merge(df_clientes, on="codigo_del_cliente", how="left")
-
-# Conversión de fecha
-df_final["marca_temporal"] = pd.to_datetime(df_final["marca_temporal"], dayfirst=True)
-
 # ==========================
-# STREAMLIT INTERFAZ
+# CRUCE Y FORMATO
 # ==========================
-st.title("📞 Seguimiento de Clientes - CxC")
+df_respuestas['Código del cliente'] = df_respuestas['Código del cliente'].astype(str).str.strip()
+df_clientes['Código del cliente'] = df_clientes['Código del cliente'].astype(str).str.strip()
 
-# Rango de fechas
-fecha_inicio = st.date_input("Fecha inicio:", datetime(2025, 9, 1))
-fecha_fin = st.date_input("Fecha fin:", datetime(2025, 9, 21))
-
-df_filtrado = df_final[(df_final["marca_temporal"].dt.date >= fecha_inicio) &
-                       (df_final["marca_temporal"].dt.date <= fecha_fin)]
-
-# ==========================
-# FUNCIONES DE ESTILO
-# ==========================
-def style_llamado(val):
-    if val.lower() == "si":
-        color = "green"
-    else:
-        color = "red"
-    return f"color: {color}; font-weight: bold"
+df_final = df_respuestas.merge(df_clientes, on="Código del cliente", how="left")
 
 # Reordenar columnas
-df_filtrado = df_filtrado[
-    ["marca_temporal", "codigo_del_cliente", "nombre_cliente", "llamado", "monto", "notas", "usuario"]
-]
+df_final = df_final[['Marca temporal', 'Código del cliente', 'Nombre Cliente', 'Llamado', 'Monto', 'Notas', 'Usuario']]
 
-styled_df = df_filtrado.style.applymap(style_llamado, subset=["llamado"])
+# Colorear filas según "Llamado"
+def color_llamado(val):
+    color = 'background-color: #d4edda' if str(val).lower() == 'si' else 'background-color: #f8d7da'
+    return color
 
-# Mostrar tabla grande y estilizada
-st.dataframe(styled_df, height=900, width="stretch")
+styled_df = df_final.style.applymap(color_llamado, subset=['Llamado'])
 
 # ==========================
-# EXPORTAR A PDF
+# STREAMLIT
+# ==========================
+st.title(f"📞 Seguimiento de Clientes - CxC (Usuario: {st.session_state['usuario']})")
+
+# Filtro por fecha
+fecha_inicio = st.date_input("Fecha inicio", pd.to_datetime("2025-09-01"))
+fecha_fin = st.date_input("Fecha fin", pd.to_datetime("2025-09-21"))
+
+df_final['Marca temporal'] = pd.to_datetime(df_final['Marca temporal'])
+df_filtrado = df_final[(df_final['Marca temporal'] >= pd.to_datetime(fecha_inicio)) &
+                       (df_final['Marca temporal'] <= pd.to_datetime(fecha_fin))]
+
+# Mostrar tabla grande
+st.dataframe(styled_df.loc[df_filtrado.index], height=900, width='stretch')
+
+# ==========================
+# EXPORTAR PDF
 # ==========================
 def export_pdf(df):
     pdf = FPDF()
-    pdf.set_auto_page_break(auto=True, margin=15)
     pdf.add_page()
-    pdf.set_font("Arial", "B", 12)
-    pdf.cell(0, 10, f"Reporte de Seguimiento de Clientes CxC ({fecha_inicio} - {fecha_fin})", ln=True, align="C")
-    pdf.ln(5)
-    
-    pdf.set_font("Arial", "", 10)
-    col_widths = [30, 30, 50, 20, 20, 40, 30]  # ajustar anchos
-    
-    # Encabezado
-    for i, col in enumerate(df.columns):
-        pdf.cell(col_widths[i], 8, col, 1, 0, "C")
-    pdf.ln()
-    
-    # Filas
-    for idx, row in df.iterrows():
-        for i, col in enumerate(df.columns):
-            pdf.cell(col_widths[i], 8, str(row[col]), 1, 0, "C")
-        pdf.ln()
-    
-    return pdf
+    pdf.set_font("Arial", size=10)
+    for i in range(len(df)):
+        row = df.iloc[i]
+        pdf.cell(0, 6, f"{row['Marca temporal']} | {row['Código del cliente']} | {row['Nombre Cliente']} | "
+                        f"{row['Llamado']} | {row['Monto']} | {row['Notas']} | {row['Usuario']}", ln=True)
+    pdf_output = BytesIO()
+    pdf.output(pdf_output)
+    pdf_output.seek(0)
+    return pdf_output
 
-if st.button("📄 Exportar PDF"):
+if st.button("Exportar PDF"):
     pdf_file = export_pdf(df_filtrado)
-    pdf_output = f"reporte_cxc_{fecha_inicio}_{fecha_fin}.pdf"
-    pdf_file.output(pdf_output)
-    with open(pdf_output, "rb") as f:
-        st.download_button("Descargar PDF", f, file_name=pdf_output, mime="application/pdf")
+    st.download_button(label="Descargar PDF", data=pdf_file, file_name="reporte_cxc.pdf", mime="application/pdf")
