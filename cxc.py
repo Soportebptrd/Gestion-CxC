@@ -2,6 +2,8 @@ import streamlit as st
 import pandas as pd
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
+from io import BytesIO
+from fpdf import FPDF
 from datetime import datetime, timedelta
 
 # ===== CONFIGURACIÓN =====
@@ -33,9 +35,7 @@ if not st.session_state.logged_in:
 # ===== CONEXIÓN GOOGLE SHEETS =====
 SHEET_URL = "https://docs.google.com/spreadsheets/d/1z-BExCxP_rNEz-Ee0Xot6XwInlBfQ5icSgyxmu7mGMY/edit"
 
-# Construir credenciales desde secrets
 creds_dict = dict(st.secrets["GOOGLE_SHEET"])
-# Asegurarse de que private_key tenga saltos de línea correctos
 creds_dict["private_key"] = creds_dict["private_key"].replace("\\n", "\n")
 
 scope = [
@@ -49,7 +49,7 @@ try:
     creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
     client = gspread.authorize(creds)
 
-    sheet_respuestas = client.open_by_url(SHEET_URL).worksheet("sheet1")
+    sheet_respuestas = client.open_by_url(SHEET_URL).worksheet("Sheet1")
     sheet_clientes = client.open_by_url(SHEET_URL).worksheet("BaseClientes")
 
     df_respuestas = pd.DataFrame(sheet_respuestas.get_all_records())
@@ -88,7 +88,6 @@ st.sidebar.header("🔍 Filtros")
 if "fecha" in df_final.columns and not df_final["fecha"].isnull().all():
     min_date = df_final["fecha"].min()
     max_date = df_final["fecha"].max()
-
     default_start = max(min_date, max_date - timedelta(days=7))
 
     fecha_inicio = st.sidebar.date_input(
@@ -151,14 +150,39 @@ if not df_filtrado.empty:
 else:
     st.warning("⚠️ No hay datos para el rango seleccionado")
 
-# ===== EXPORTAR CSV =====
+# ===== EXPORTAR PDF =====
+def export_pdf(df):
+    pdf = FPDF()
+    pdf.add_page()
+    pdf.set_font("Arial", "B", 12)
+    pdf.cell(0, 10, "Reporte CxC", ln=True, align="C")
+    pdf.ln(5)
+    pdf.set_font("Arial", "", 10)
+
+    # Encabezados
+    for col in df.columns:
+        pdf.cell(28, 8, str(col), border=1)
+    pdf.ln()
+
+    # Filas
+    for _, row in df.iterrows():
+        for col in df.columns:
+            text = str(row[col])
+            pdf.cell(28, 8, text[:15], border=1)  # cortar si es largo
+        pdf.ln()
+
+    pdf_output = BytesIO()
+    pdf.output(pdf_output)
+    pdf_output.seek(0)
+    return pdf_output
+
 if not df_filtrado.empty:
-    csv = df_filtrado.to_csv(index=False)
+    pdf_bytes = export_pdf(df_filtrado[columnas_disponibles])
     st.download_button(
-        "📥 Descargar CSV",
-        csv,
-        f"reporte_cxc_{datetime.now().strftime('%Y%m%d')}.csv",
-        "text/csv"
+        "📥 Descargar PDF",
+        data=pdf_bytes,
+        file_name=f"reporte_cxc_{datetime.now().strftime('%Y%m%d')}.pdf",
+        mime="application/pdf"
     )
 
 # ===== CERRAR SESIÓN =====
@@ -166,4 +190,3 @@ if st.sidebar.button("🚪 Cerrar sesión"):
     for key in list(st.session_state.keys()):
         del st.session_state[key]
     st.rerun()
-
