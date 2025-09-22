@@ -34,7 +34,7 @@ creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
 client = gspread.authorize(creds)
 
 # --- LEER HOJAS ---
-sheet_respuestas = client.open_by_url(SHEET_URL).worksheet("Sheet1")
+sheet_respuestas = client.open_by_url(SHEET_URL).worksheet("sheet1")
 sheet_clientes = client.open_by_url(SHEET_URL).worksheet("BaseClientes")
 
 df_respuestas = pd.DataFrame(sheet_respuestas.get_all_records())
@@ -89,3 +89,4 @@ def export_pdf(df):
 if st.button("Exportar PDF"):
     pdf_file = export_pdf(df_final)
     st.download_button("Descargar PDF", data=pdf_file, file_name="seguimiento_clientes.pdf", mime="application/pdf")
+
