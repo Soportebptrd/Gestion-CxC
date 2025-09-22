@@ -4,15 +4,14 @@ import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 from io import BytesIO
 from fpdf import FPDF
-import json
+from datetime import datetime, timedelta
 
 # ===== CONFIGURACIÓN =====
 st.set_page_config(page_title="Seguimiento CxC - IDEMEFA", layout="wide")
 
-# ===== LOGIN =====
+# ===== LOGIN SIMPLIFICADO =====
 st.title("📞 Seguimiento de Clientes - CxC")
 
-# Inicializar estado de sesión
 if 'logged_in' not in st.session_state:
     st.session_state.logged_in = False
 
@@ -20,30 +19,20 @@ if not st.session_state.logged_in:
     usuario_input = st.text_input("Usuario")
     contrasena_input = st.text_input("Contraseña", type="password")
     
-    # Configuración de usuarios
-    USERS = {
-        "idemefa": "idemefa",
-        "admin": "admin123",
-        "erick": "erick123"
-    }
+    USERS = {"idemefa": "idemefa", "admin": "admin123", "erick": "erick123"}
     
     if st.button("Iniciar sesión"):
         if usuario_input in USERS and contrasena_input == USERS[usuario_input]:
             st.session_state.logged_in = True
             st.session_state.username = usuario_input
-            st.success(f"✅ Bienvenido {usuario_input}")
             st.rerun()
         else:
             st.error("❌ Usuario o contraseña incorrectos")
     st.stop()
 
-# Usuario ya logueado
-st.success(f"👋 Bienvenido, {st.session_state.username}!")
-
-# ===== CONFIGURACIÓN GOOGLE SHEETS =====
+# ===== CONEXIÓN GOOGLE SHEETS =====
 SHEET_URL = "https://docs.google.com/spreadsheets/d/1z-BExCxP_rNEz-Ee0Xot6XwInlBfQ5icSgyxmu7mGMY/edit"
 
-# Crear diccionario de credenciales desde secrets
 creds_dict = {
     "type": "service_account",
     "project_id": "gestion-cxc-idemefa",
@@ -68,34 +57,20 @@ scope = [
 try:
     creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
     client = gspread.authorize(creds)
-    st.sidebar.success("✅ Conectado a Google Sheets")
-except Exception as e:
-    st.error(f"❌ Error de conexión: {str(e)}")
-    st.stop()
-
-# ===== CARGA DE DATOS =====
-try:
+    
     # Cargar datos
-    sheet_respuestas = client.open_by_url(SHEET_URL).worksheet("sheet1")
+    sheet_respuestas = client.open_by_url(SHEET_URL).worksheet("Sheet1")
     sheet_clientes = client.open_by_url(SHEET_URL).worksheet("BaseClientes")
     
     df_respuestas = pd.DataFrame(sheet_respuestas.get_all_records())
     df_clientes = pd.DataFrame(sheet_clientes.get_all_records())
     
-    # Mostrar info de carga
-    st.sidebar.info(f"📊 Sheet1: {len(df_respuestas)} registros")
-    st.sidebar.info(f"📊 BaseClientes: {len(df_clientes)} clientes")
-    
-    # Verificar columnas
-    st.sidebar.write("**Columnas Sheet1:**", df_respuestas.columns.tolist())
-    st.sidebar.write("**Columnas BaseClientes:**", df_clientes.columns.tolist())
-    
 except Exception as e:
-    st.error(f"❌ Error cargando datos: {str(e)}")
+    st.error(f"❌ Error de conexión: {str(e)}")
     st.stop()
 
 # ===== PROCESAMIENTO DE DATOS =====
-# Renombrar columnas para consistencia
+# Renombrar columnas
 df_respuestas.rename(columns={
     "Código del cliente": "codigo_cliente",
     "Usuario": "usuario",
@@ -109,34 +84,48 @@ df_clientes.rename(columns={
     "Nombre Cliente": "nombre_cliente"
 }, inplace=True)
 
-# Limpiar y estandarizar datos
+# Limpiar datos
 df_respuestas["codigo_cliente"] = df_respuestas["codigo_cliente"].astype(str).str.strip()
 df_clientes["codigo_cliente"] = df_clientes["codigo_cliente"].astype(str).str.strip()
 
-# Merge de datos
+# Merge
 df_final = df_respuestas.merge(df_clientes, on="codigo_cliente", how="left")
 
-# Convertir marca temporal
+# Convertir fecha
 if "Marca temporal" in df_final.columns:
     df_final["Marca temporal"] = pd.to_datetime(df_final["Marca temporal"], errors='coerce')
     df_final["fecha"] = df_final["Marca temporal"].dt.date
-    df_final["hora"] = df_final["Marca temporal"].dt.time
 
-# Ordenar por fecha
+# Ordenar
 if "Marca temporal" in df_final.columns:
     df_final = df_final.sort_values("Marca temporal", ascending=False)
 
-# ===== INTERFAZ PRINCIPAL =====
-st.header("📋 Registro de Llamadas a Clientes")
-
-# Filtros en sidebar
+# ===== FILTROS EN SIDEBAR =====
 st.sidebar.header("🔍 Filtros")
 
-# Filtro por fecha
+# Filtro por rango de fechas
 if "fecha" in df_final.columns:
-    fechas = sorted(df_final["fecha"].unique(), reverse=True)
-    fecha_seleccionada = st.sidebar.selectbox("Filtrar por fecha:", options=fechas)
-    df_filtrado = df_final[df_final["fecha"] == fecha_seleccionada]
+    min_date = df_final["fecha"].min()
+    max_date = df_final["fecha"].max()
+    
+    fecha_inicio = st.sidebar.date_input(
+        "Fecha inicio:",
+        value=max_date - timedelta(days=7),
+        min_value=min_date,
+        max_value=max_date
+    )
+    
+    fecha_fin = st.sidebar.date_input(
+        "Fecha fin:",
+        value=max_date,
+        min_value=min_date,
+        max_value=max_date
+    )
+    
+    df_filtrado = df_final[
+        (df_final["fecha"] >= fecha_inicio) & 
+        (df_final["fecha"] <= fecha_fin)
+    ]
 else:
     df_filtrado = df_final
 
@@ -144,23 +133,16 @@ else:
 if "usuario" in df_filtrado.columns:
     usuarios = sorted(df_filtrado["usuario"].dropna().unique())
     usuarios_seleccionados = st.sidebar.multiselect(
-        "Filtrar por usuario:", 
+        "Usuarios:",
         options=usuarios,
         default=usuarios
     )
     df_filtrado = df_filtrado[df_filtrado["usuario"].isin(usuarios_seleccionados)]
 
-# Filtro por llamado
-if "llamado" in df_filtrado.columns:
-    estado_llamado = st.sidebar.selectbox(
-        "Filtrar por llamado:",
-        options=["Todos", "Sí", "No"]
-    )
-    if estado_llamado != "Todos":
-        df_filtrado = df_filtrado[df_filtrado["llamado"].str.upper() == estado_llamado.upper()]
+# ===== INTERFAZ PRINCIPAL =====
+st.header(f"📋 Registro de Llamadas - {st.session_state.username}")
 
-# ===== MOSTRAR DATOS =====
-# Estadísticas
+# Métricas
 col1, col2, col3, col4 = st.columns(4)
 with col1:
     st.metric("📞 Total llamadas", len(df_filtrado))
@@ -170,10 +152,10 @@ with col3:
     st.metric("🏢 Clientes", df_filtrado["codigo_cliente"].nunique())
 with col4:
     if "llamado" in df_filtrado.columns:
-        llamados_exitosos = (df_filtrado["llamado"].str.upper() == "SÍ").sum()
-        st.metric("✅ Llamados exitosos", llamados_exitosos)
+        llamados_si = df_filtrado["llamado"].str.upper().isin(["SI", "SÍ"]).sum()
+        st.metric("✅ Llamados exitosos", llamados_si)
 
-# Función para colorear el dataframe
+# Función de estilo
 def estilo_llamados(val):
     if str(val).upper() in ["SÍ", "SI", "YES"]:
         return 'background-color: #d4edda; color: #155724;'
@@ -181,10 +163,10 @@ def estilo_llamados(val):
         return 'background-color: #f8d7da; color: #721c24;'
     return ''
 
-# Aplicar estilo
+# Mostrar datos
 if not df_filtrado.empty:
     columnas_mostrar = [
-        "fecha", "hora", "codigo_cliente", "nombre_cliente", 
+        "fecha", "codigo_cliente", "nombre_cliente", 
         "usuario", "llamado", "monto", "notas"
     ]
     columnas_disponibles = [col for col in columnas_mostrar if col in df_filtrado.columns]
@@ -202,56 +184,17 @@ if not df_filtrado.empty:
         hide_index=True
     )
 else:
-    st.warning("⚠️ No hay datos que coincidan con los filtros seleccionados")
+    st.warning("⚠️ No hay datos para el rango seleccionado")
 
-# ===== EXPORTAR DATOS =====
-st.sidebar.header("💾 Exportar datos")
-
+# ===== EXPORTAR =====
 if not df_filtrado.empty:
-    # Exportar CSV
+    # CSV
     csv = df_filtrado.to_csv(index=False)
-    st.sidebar.download_button(
+    st.download_button(
         "📥 Descargar CSV",
         csv,
-        f"reporte_cxc_{pd.Timestamp.today().strftime('%Y%m%d')}.csv",
+        f"reporte_cxc_{datetime.now().strftime('%Y%m%d')}.csv",
         "text/csv"
-    )
-
-    # Exportar PDF
-    def generar_pdf(df):
-        pdf = FPDF()
-        pdf.add_page()
-        pdf.set_font("Arial", 'B', 16)
-        pdf.cell(0, 10, "Reporte de Seguimiento CxC - IDEMEFA", 0, 1, 'C')
-        pdf.ln(5)
-        
-        pdf.set_font("Arial", '', 10)
-        pdf.cell(0, 8, f"Generado el: {pd.Timestamp.today().strftime('%Y-%m-%d %H:%M')}", 0, 1)
-        pdf.cell(0, 8, f"Total registros: {len(df)}", 0, 1)
-        pdf.ln(5)
-        
-        # Encabezados de tabla
-        pdf.set_font("Arial", 'B', 8)
-        columnas = df.columns.tolist()
-        for col in columnas:
-            pdf.cell(40, 6, str(col)[:15], 1)
-        pdf.ln()
-        
-        # Datos de tabla
-        pdf.set_font("Arial", '', 7)
-        for _, row in df.head(50).iterrows():  # Limitar a 50 filas
-            for col in columnas:
-                pdf.cell(40, 6, str(row[col])[:20], 1)  # Truncar texto largo
-            pdf.ln()
-        
-        return pdf.output(dest='S').encode('latin1')
-
-    pdf_bytes = generar_pdf(df_filtrado)
-    st.sidebar.download_button(
-        "📄 Descargar PDF",
-        pdf_bytes,
-        f"reporte_cxc_{pd.Timestamp.today().strftime('%Y%m%d')}.pdf",
-        "application/pdf"
     )
 
 # ===== CERRAR SESIÓN =====
@@ -259,4 +202,3 @@ if st.sidebar.button("🚪 Cerrar sesión"):
     for key in list(st.session_state.keys()):
         del st.session_state[key]
     st.rerun()
-
