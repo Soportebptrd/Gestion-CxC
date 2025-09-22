@@ -1,14 +1,13 @@
 import streamlit as st
 import pandas as pd
 import gspread
-from google.oauth2.service_account import Credentials
+from oauth2client.service_account import ServiceAccountCredentials
 from fpdf import FPDF
+from io import BytesIO
 
-# -----------------------------
-# Login
-# -----------------------------
-st.title("📞 Seguimiento de Clientes - CxC")
+st.set_page_config(page_title="Seguimiento de Clientes - CxC", layout="wide")
 
+# --- LOGIN ---
 usuario_input = st.text_input("Usuario")
 contrasena_input = st.text_input("Contraseña", type="password")
 
@@ -18,83 +17,75 @@ if usuario_input != st.secrets["login"]["usuario"] or contrasena_input != st.sec
 
 st.success(f"Bienvenido {usuario_input}")
 
-# -----------------------------
-# Conexión a Google Sheets
-# -----------------------------
-SCOPE = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
+# --- GOOGLE SHEET ---
+SHEET_URL = st.secrets["google"]["SHEET_URL"]
 
-creds_dict = st.secrets["google_sheet"]
-creds = Credentials.from_service_account_info(creds_dict, scopes=SCOPE)
+scope = ["https://spreadsheets.google.com/feeds",
+         "https://www.googleapis.com/auth/spreadsheets",
+         "https://www.googleapis.com/auth/drive.file",
+         "https://www.googleapis.com/auth/drive"]
+
+# Convierte el secreto a diccionario
+creds_dict = dict(st.secrets["google"])
+# Reemplaza saltos de línea de la private_key
+creds_dict["private_key"] = creds_dict["private_key"].replace("\\n", "\n")
+
+creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
 client = gspread.authorize(creds)
 
-# -----------------------------
-# Cargar hojas
-# -----------------------------
-SHEET_URL = "TU_URL_DE_GOOGLE_SHEET"
-sheet_respuestas = client.open_by_url(SHEET_URL).worksheet("sheet1")
+# --- LEER HOJAS ---
+sheet_respuestas = client.open_by_url(SHEET_URL).worksheet("Sheet1")
 sheet_clientes = client.open_by_url(SHEET_URL).worksheet("BaseClientes")
 
-data_respuestas = sheet_respuestas.get_all_records()
-data_clientes = sheet_clientes.get_all_records()
+df_respuestas = pd.DataFrame(sheet_respuestas.get_all_records())
+df_clientes = pd.DataFrame(sheet_clientes.get_all_records())
 
-df_respuestas = pd.DataFrame(data_respuestas)
-df_clientes = pd.DataFrame(data_clientes)
+# --- UNIR DATOS ---
+df_final = pd.merge(df_respuestas, df_clientes, left_on="Código del cliente", right_on="Código del cliente", how="left")
+df_final = df_final.rename(columns={
+    "Marca temporal": "marca_temporal",
+    "Código del cliente": "codigo_cliente",
+    "Nombre Cliente": "nombre_cliente",
+    "Llamado": "llamado",
+    "Notas": "notas",
+    "Usuario": "usuario",
+    "Monto": "monto"
+})
 
-# -----------------------------
-# Merge con clientes
-# -----------------------------
-df_respuestas['Código del cliente'] = df_respuestas['Código del cliente'].astype(str).str.strip()
-df_clientes['Código del cliente'] = df_clientes['Código del cliente'].astype(str).str.strip()
+df_final = df_final[["marca_temporal","codigo_cliente","nombre_cliente","llamado","monto","notas","usuario"]]
 
-df_final = df_respuestas.merge(df_clientes, on="Código del cliente", how="left")
-
-# -----------------------------
-# Reordenar columnas
-# -----------------------------
-df_final = df_final[[
-    "Marca temporal",
-    "Código del cliente",
-    "Nombre Cliente",
-    "Llamado",
-    "Monto",
-    "Notas",
-    "Usuario"
-]]
-
-# -----------------------------
-# Colorear tabla
-# -----------------------------
-def color_llamado(val):
+# --- ESTILO DE TABLA ---
+def highlight_llamado(val):
     color = 'background-color: #d4edda' if str(val).lower() == "si" else 'background-color: #f8d7da'
     return color
 
-styled_df = df_final.style.applymap(color_llamado, subset=['Llamado'])
+styled_df = df_final.style.applymap(highlight_llamado, subset=["llamado"])
 
-# -----------------------------
-# Mostrar tabla grande
-# -----------------------------
 st.dataframe(styled_df, height=900, width='stretch')
 
-# -----------------------------
-# Exportar PDF
-# -----------------------------
+# --- EXPORTAR PDF ---
 def export_pdf(df):
     pdf = FPDF()
     pdf.add_page()
-    pdf.set_font("Arial", size=12)
+    pdf.set_font("Arial", size=10)
+    col_widths = [35, 30, 50, 20, 25, 50, 25]
 
-    for i in range(len(df)):
-        row = df.iloc[i]
-        line = f"{row['Marca temporal']} | {row['Código del cliente']} | {row['Nombre Cliente']} | {row['Llamado']} | {row['Monto']} | {row['Notas']} | {row['Usuario']}"
-        pdf.multi_cell(0, 8, line)
+    # Header
+    for i, col in enumerate(df.columns):
+        pdf.cell(col_widths[i], 8, col, border=1)
+    pdf.ln()
 
-    pdf_output = "seguimiento_clientes.pdf"
+    # Rows
+    for idx, row in df.iterrows():
+        for i, col in enumerate(df.columns):
+            pdf.cell(col_widths[i], 8, str(row[col]), border=1)
+        pdf.ln()
+
+    pdf_output = BytesIO()
     pdf.output(pdf_output)
+    pdf_output.seek(0)
     return pdf_output
 
 if st.button("Exportar PDF"):
     pdf_file = export_pdf(df_final)
-    st.success("PDF generado")
-    with open(pdf_file, "rb") as f:
-        st.download_button("Descargar PDF", f, file_name=pdf_file)
-
+    st.download_button("Descargar PDF", data=pdf_file, file_name="seguimiento_clientes.pdf", mime="application/pdf")
