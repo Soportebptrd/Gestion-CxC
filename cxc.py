@@ -31,7 +31,7 @@ client = gspread.authorize(creds)
 # Cargar hojas
 # -----------------------------
 SHEET_URL = "TU_URL_DE_GOOGLE_SHEET"
-sheet_respuestas = client.open_by_url(SHEET_URL).worksheet("Sheet1")
+sheet_respuestas = client.open_by_url(SHEET_URL).worksheet("sheet1")
 sheet_clientes = client.open_by_url(SHEET_URL).worksheet("BaseClientes")
 
 data_respuestas = sheet_respuestas.get_all_records()
@@ -97,3 +97,4 @@ if st.button("Exportar PDF"):
     st.success("PDF generado")
     with open(pdf_file, "rb") as f:
         st.download_button("Descargar PDF", f, file_name=pdf_file)
+
