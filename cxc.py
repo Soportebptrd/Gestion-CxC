@@ -2,14 +2,13 @@ import streamlit as st
 import pandas as pd
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
-from io import BytesIO
 from fpdf import FPDF
 from datetime import datetime, timedelta
 
 # ===== CONFIGURACIÓN =====
 st.set_page_config(page_title="Seguimiento CxC - IDEMEFA", layout="wide")
 
-# ===== LOGIN SIMPLIFICADO =====
+# ===== LOGIN =====
 st.title("📞 Seguimiento de Clientes - CxC")
 
 if 'logged_in' not in st.session_state:
@@ -18,13 +17,10 @@ if 'logged_in' not in st.session_state:
 if not st.session_state.logged_in:
     usuario_input = st.text_input("Usuario")
     contrasena_input = st.text_input("Contraseña", type="password")
-
-    # Obtener login desde secrets
-    LOGIN_USUARIO = st.secrets["login"]["usuario"]
-    LOGIN_CONTRASENA = st.secrets["login"]["contrasena"]
-
+    
     if st.button("Iniciar sesión"):
-        if usuario_input == LOGIN_USUARIO and contrasena_input == LOGIN_CONTRASENA:
+        if (usuario_input == st.secrets["login"]["usuario"] and
+            contrasena_input == st.secrets["login"]["contrasena"]):
             st.session_state.logged_in = True
             st.session_state.username = usuario_input
             st.rerun()
@@ -36,6 +32,7 @@ if not st.session_state.logged_in:
 SHEET_URL = "https://docs.google.com/spreadsheets/d/1z-BExCxP_rNEz-Ee0Xot6XwInlBfQ5icSgyxmu7mGMY/edit"
 
 creds_dict = dict(st.secrets["GOOGLE_SHEET"])
+# Reemplazar saltos de línea correctamente
 creds_dict["private_key"] = creds_dict["private_key"].replace("\\n", "\n")
 
 scope = [
@@ -48,14 +45,14 @@ scope = [
 try:
     creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
     client = gspread.authorize(creds)
-
+    
     sheet_respuestas = client.open_by_url(SHEET_URL).worksheet("sheet1")
     sheet_clientes = client.open_by_url(SHEET_URL).worksheet("BaseClientes")
-
+    
     df_respuestas = pd.DataFrame(sheet_respuestas.get_all_records())
     df_clientes = pd.DataFrame(sheet_clientes.get_all_records())
 except Exception as e:
-    st.error(f"❌ Error de conexión: {str(e)}")
+    st.error(f"❌ Error de conexión: {e}")
     st.stop()
 
 # ===== PROCESAMIENTO DE DATOS =====
@@ -68,7 +65,7 @@ df_respuestas.rename(columns={
 }, inplace=True)
 
 df_clientes.rename(columns={
-    "Código del cliente": "codigo_cliente",
+    "Código del cliente": "codigo_cliente", 
     "Nombre Cliente": "nombre_cliente"
 }, inplace=True)
 
@@ -82,44 +79,23 @@ if "Marca temporal" in df_final.columns:
     df_final["fecha"] = df_final["Marca temporal"].dt.date
     df_final = df_final.sort_values("Marca temporal", ascending=False)
 
-# ===== FILTROS EN SIDEBAR =====
+# ===== FILTROS =====
 st.sidebar.header("🔍 Filtros")
-
-if "fecha" in df_final.columns and not df_final["fecha"].isnull().all():
+if "fecha" in df_final.columns:
     min_date = df_final["fecha"].min()
     max_date = df_final["fecha"].max()
-    default_start = max(min_date, max_date - timedelta(days=7))
-
-    fecha_inicio = st.sidebar.date_input(
-        "Fecha inicio:",
-        value=default_start,
-        min_value=min_date,
-        max_value=max_date
-    )
-    fecha_fin = st.sidebar.date_input(
-        "Fecha fin:",
-        value=max_date,
-        min_value=min_date,
-        max_value=max_date
-    )
-
-    df_filtrado = df_final[
-        (df_final["fecha"] >= fecha_inicio) &
-        (df_final["fecha"] <= fecha_fin)
-    ]
+    fecha_inicio = st.sidebar.date_input("Fecha inicio:", value=min_date, min_value=min_date, max_value=max_date)
+    fecha_fin = st.sidebar.date_input("Fecha fin:", value=max_date, min_value=min_date, max_value=max_date)
+    df_filtrado = df_final[(df_final["fecha"] >= fecha_inicio) & (df_final["fecha"] <= fecha_fin)]
 else:
     df_filtrado = df_final
 
 if "usuario" in df_filtrado.columns:
     usuarios = sorted(df_filtrado["usuario"].dropna().unique())
-    usuarios_seleccionados = st.sidebar.multiselect(
-        "Usuarios:",
-        options=usuarios,
-        default=usuarios
-    )
+    usuarios_seleccionados = st.sidebar.multiselect("Usuarios:", options=usuarios, default=usuarios)
     df_filtrado = df_filtrado[df_filtrado["usuario"].isin(usuarios_seleccionados)]
 
-# ===== INTERFAZ PRINCIPAL =====
+# ===== INTERFAZ =====
 st.header(f"📋 Registro de Llamadas - {st.session_state.username}")
 
 col1, col2, col3, col4 = st.columns(4)
@@ -141,14 +117,11 @@ def estilo_llamados(val):
         return 'background-color: #f8d7da; color: #721c24;'
     return ''
 
-if not df_filtrado.empty:
-    columnas_mostrar = ["fecha", "codigo_cliente", "nombre_cliente", "usuario", "llamado", "monto", "notas"]
-    columnas_disponibles = [col for col in columnas_mostrar if col in df_filtrado.columns]
-    df_mostrar = df_filtrado[columnas_disponibles]
-    styled_df = df_mostrar.style.applymap(estilo_llamados, subset=["llamado"])
-    st.dataframe(styled_df, height=600, use_container_width=True, hide_index=True)
-else:
-    st.warning("⚠️ No hay datos para el rango seleccionado")
+columnas_mostrar = ["fecha", "codigo_cliente", "nombre_cliente", "usuario", "llamado", "monto", "notas"]
+columnas_disponibles = [col for col in columnas_mostrar if col in df_filtrado.columns]
+df_mostrar = df_filtrado[columnas_disponibles]
+
+st.dataframe(df_mostrar.style.applymap(estilo_llamados, subset=["llamado"]), height=600, use_container_width=True, hide_index=True)
 
 # ===== EXPORTAR PDF =====
 def export_pdf(df):
@@ -167,14 +140,11 @@ def export_pdf(df):
     # Filas
     for _, row in df.iterrows():
         for col in df.columns:
-            text = str(row[col])
-            pdf.cell(28, 8, text[:15], border=1)  # cortar si es largo
+            pdf.cell(28, 8, str(row[col])[:15], border=1)
         pdf.ln()
 
-    pdf_output = BytesIO()
-    pdf.output(pdf_output)
-    pdf_output.seek(0)
-    return pdf_output
+    pdf_bytes = pdf.output(dest='S').encode('latin1')
+    return pdf_bytes
 
 if not df_filtrado.empty:
     pdf_bytes = export_pdf(df_filtrado[columnas_disponibles])
@@ -190,4 +160,3 @@ if st.sidebar.button("🚪 Cerrar sesión"):
     for key in list(st.session_state.keys()):
         del st.session_state[key]
     st.rerun()
-
