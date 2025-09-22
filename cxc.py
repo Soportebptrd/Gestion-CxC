@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 # ===== CONFIGURACIÓN =====
 st.set_page_config(page_title="Seguimiento CxC - IDEMEFA", layout="wide")
 
-# ===== LOGIN =====
+# ===== LOGIN SIMPLIFICADO =====
 st.title("📞 Seguimiento de Clientes - CxC")
 
 if 'logged_in' not in st.session_state:
@@ -16,9 +16,13 @@ if 'logged_in' not in st.session_state:
 if not st.session_state.logged_in:
     usuario_input = st.text_input("Usuario")
     contrasena_input = st.text_input("Contraseña", type="password")
-    
+
+    # Obtener login desde secrets
+    LOGIN_USUARIO = st.secrets["login"]["usuario"]
+    LOGIN_CONTRASENA = st.secrets["login"]["contrasena"]
+
     if st.button("Iniciar sesión"):
-        if usuario_input == st.secrets["login"]["usuario"] and contrasena_input == st.secrets["login"]["contrasena"]:
+        if usuario_input == LOGIN_USUARIO and contrasena_input == LOGIN_CONTRASENA:
             st.session_state.logged_in = True
             st.session_state.username = usuario_input
             st.rerun()
@@ -26,11 +30,13 @@ if not st.session_state.logged_in:
             st.error("❌ Usuario o contraseña incorrectos")
     st.stop()
 
-# ===== GOOGLE SHEETS =====
+# ===== CONEXIÓN GOOGLE SHEETS =====
 SHEET_URL = "https://docs.google.com/spreadsheets/d/1z-BExCxP_rNEz-Ee0Xot6XwInlBfQ5icSgyxmu7mGMY/edit"
 
+# Construir credenciales desde secrets
 creds_dict = dict(st.secrets["GOOGLE_SHEET"])
-creds_dict["private_key"] = creds_dict["private_key"].replace("\\n", "\n")  # Formato correcto de clave
+# Asegurarse de que private_key tenga saltos de línea correctos
+creds_dict["private_key"] = creds_dict["private_key"].replace("\\n", "\n")
 
 scope = [
     "https://spreadsheets.google.com/feeds",
@@ -42,14 +48,12 @@ scope = [
 try:
     creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
     client = gspread.authorize(creds)
-    
-    # Cargar datos
-    sheet_respuestas = client.open_by_url(SHEET_URL).worksheet("sheet1")
+
+    sheet_respuestas = client.open_by_url(SHEET_URL).worksheet("Sheet1")
     sheet_clientes = client.open_by_url(SHEET_URL).worksheet("BaseClientes")
-    
+
     df_respuestas = pd.DataFrame(sheet_respuestas.get_all_records())
     df_clientes = pd.DataFrame(sheet_clientes.get_all_records())
-    
 except Exception as e:
     st.error(f"❌ Error de conexión: {str(e)}")
     st.stop()
@@ -64,7 +68,7 @@ df_respuestas.rename(columns={
 }, inplace=True)
 
 df_clientes.rename(columns={
-    "Código del cliente": "codigo_cliente", 
+    "Código del cliente": "codigo_cliente",
     "Nombre Cliente": "nombre_cliente"
 }, inplace=True)
 
@@ -78,16 +82,18 @@ if "Marca temporal" in df_final.columns:
     df_final["fecha"] = df_final["Marca temporal"].dt.date
     df_final = df_final.sort_values("Marca temporal", ascending=False)
 
-# ===== FILTROS =====
+# ===== FILTROS EN SIDEBAR =====
 st.sidebar.header("🔍 Filtros")
 
 if "fecha" in df_final.columns and not df_final["fecha"].isnull().all():
-    min_date = df_final["fecha"].min() or datetime.today().date()
-    max_date = df_final["fecha"].max() or datetime.today().date()
+    min_date = df_final["fecha"].min()
+    max_date = df_final["fecha"].max()
+
+    default_start = max(min_date, max_date - timedelta(days=7))
 
     fecha_inicio = st.sidebar.date_input(
         "Fecha inicio:",
-        value=max_date - timedelta(days=7),
+        value=default_start,
         min_value=min_date,
         max_value=max_date
     )
@@ -99,7 +105,7 @@ if "fecha" in df_final.columns and not df_final["fecha"].isnull().all():
     )
 
     df_filtrado = df_final[
-        (df_final["fecha"] >= fecha_inicio) & 
+        (df_final["fecha"] >= fecha_inicio) &
         (df_final["fecha"] <= fecha_fin)
     ]
 else:
@@ -145,7 +151,7 @@ if not df_filtrado.empty:
 else:
     st.warning("⚠️ No hay datos para el rango seleccionado")
 
-# ===== EXPORTAR =====
+# ===== EXPORTAR CSV =====
 if not df_filtrado.empty:
     csv = df_filtrado.to_csv(index=False)
     st.download_button(
